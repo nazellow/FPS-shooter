@@ -1,0 +1,409 @@
+
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>Mini Strike FPS</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#10151d;color:white;font:14px Arial;overflow:hidden;touch-action:none}
+canvas{display:block;width:100vw;height:100dvh}
+#hud{position:fixed;inset:0;pointer-events:none}
+.top{display:flex;justify-content:center;gap:12px;padding:12px;font-weight:bold;text-shadow:0 2px 4px #000}
+.box{background:#101b2bd9;padding:8px 14px;border:1px solid #627b99;border-radius:5px}
+#stats{position:absolute;bottom:14px;left:12px;background:#101b2bd9;padding:10px;border-radius:6px;line-height:1.8}
+#msg{position:absolute;top:65px;width:100%;text-align:center;color:#ffe17d;text-shadow:0 2px 4px black}
+#cross{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);font-size:27px;font-weight:200}
+#controls{position:fixed;inset:0;pointer-events:none}
+.btn{position:absolute;pointer-events:auto;display:grid;place-items:center;border:2px solid #ffffff8c;background:#162b45b8;color:white;border-radius:50%;font-weight:bold;user-select:none;touch-action:none}
+#stick{width:110px;height:110px;left:24px;bottom:35px}
+#knob{width:42px;height:42px;border-radius:50%;background:#a8d8ff8c;border:2px solid white}
+#fire{width:78px;height:78px;right:25px;bottom:50px;background:#9e322ac9}
+#reload{right:35px;bottom:145px;width:55px;height:55px}
+#jump{right:115px;bottom:35px;width:53px;height:53px}
+#start{position:fixed;inset:0;background:#08111eeb;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:14px;text-align:center;padding:24px}
+#start h1{font-size:32px;margin:0;color:#8ccaff}
+#start button{background:#1685e8;border:0;color:white;padding:15px 35px;font-size:18px;border-radius:8px;font-weight:bold}
+.small{max-width:330px;line-height:1.6;color:#c3d1e3}
+#hint{position:absolute;right:12px;top:75px;font-size:11px;color:#fff9;text-align:right}
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<div id="hud">
+ <div class="top">
+  <div class="box">BLUE <span id="score">0</span></div>
+  <div class="box">ROUND <span id="round">1</span></div>
+  <div class="box">BOTS <span id="left">5</span></div>
+ </div>
+ <div id="msg">ELIMINATE ALL BOTS</div>
+ <div id="cross">+</div>
+ <div id="hint">Geser layar kanan untuk membidik</div>
+ <div id="stats">❤️ <span id="hp">100</span><br>🔫 <span id="ammo">30</span> / <span id="reserve">90</span><br>🎯 <span id="kills">0</span> eliminasi</div>
+</div>
+<div id="controls">
+ <div class="btn" id="stick"><div id="knob"></div></div>
+ <div class="btn" id="fire">FIRE</div>
+ <div class="btn" id="reload">RELOAD</div>
+ <div class="btn" id="jump">JUMP</div>
+</div>
+<div id="start">
+ <h1>MINI STRIKE</h1>
+ <div class="small">FPS bergaya tactical shooter. Habisi semua bot dan bertahan hidup!<br><br>Kontrol HP: joystick kiri untuk bergerak, geser sisi kanan untuk melihat, tombol FIRE untuk menembak.</div>
+ <button id="play">MULAI GAME</button>
+ <div class="small">Prototipe 3D ringan • Offline • Browser Android</div>
+</div>
+<script>
+(()=>{
+const canvas=document.getElementById('game');
+const ctx=canvas.getContext('2d');
+const $=id=>document.getElementById(id);
+let W=innerWidth,H=innerHeight;
+function resize(){W=innerWidth;H=innerHeight;canvas.width=W;canvas.height=H}
+addEventListener('resize',resize);resize();
+
+const map=[
+"111111111111",
+"100000000001",
+"101100010001",
+"100000000001",
+"100011000101",
+"100000000001",
+"101000110001",
+"100000000001",
+"100100000001",
+"111111111111"
+];
+const MW=map[0].length,MH=map.length;
+const solid=(x,y)=>!map[Math.floor(y)]||
+map[Math.floor(y)][Math.floor(x)]!=="0";
+let player,bots,keys={},running=false,score=0,kills=0,round=1;
+let ammo=30,reserve=90,hp=100,reloading=false;
+let yaw=0,joyX=0,joyY=0,fireHeld=false,last=0,fireTimer=0;
+let depth=[],messageTimer=0,hitFlash=0;
+const FOV=Math.PI/2.8;
+
+function spawnBots(n){
+ bots=[];
+ for(let i=0;i<n;i++){
+  let x,y,tries=0;
+  do{
+   x=1.5+Math.random()*(MW-3);
+   y=1.5+Math.random()*(MH-3);
+   tries++;
+  }while((solid(x,y)||Math.hypot(x-player.x,y-player.y)<3)&&tries<200);
+  bots.push({x,y,hp:100,alive:true,attack:Math.random()*2,
+    phase:Math.random()*6,speed:.6+Math.random()*.25});
+ }
+ $('left').textContent=bots.length;
+}
+function start(){
+ player={x:2.5,y:2.5};
+ yaw=0;hp=100;ammo=30;reserve=90;score=0;kills=0;round=1;
+ running=true;
+ spawnBots(5);
+ $('start').style.display='none';
+ updateHUD();
+ last=performance.now();
+ requestAnimationFrame(loop);
+}
+$('play').onclick=start;
+
+function updateHUD(){
+ $('hp').textContent=Math.max(0,Math.ceil(hp));
+ $('ammo').textContent=ammo;
+ $('reserve').textContent=reserve;
+ $('kills').textContent=kills;
+ $('score').textContent=score;
+ $('round').textContent=round;
+ $('left').textContent=bots.filter(b=>b.alive).length;
+}
+function say(t){
+ $('msg').textContent=t;messageTimer=2;
+}
+function wallDist(angle){
+ let sn=Math.sin(angle),cs=Math.cos(angle);
+ for(let d=.03;d<16;d+=.035){
+  if(solid(player.x+cs*d,player.y+sn*d))return d;
+ }
+ return 16;
+}
+function cast(angle){
+ let d=wallDist(angle);
+ return d;
+}
+function render(){
+ // sky and ground
+ let sky=ctx.createLinearGradient(0,0,0,H*.55);
+ sky.addColorStop(0,'#4d88b7');sky.addColorStop(1,'#c5d2d3');
+ ctx.fillStyle=sky;ctx.fillRect(0,0,W,H*.53);
+ let floor=ctx.createLinearGradient(0,H*.45,0,H);
+ floor.addColorStop(0,'#a79a7e');floor.addColorStop(1,'#514a40');
+ ctx.fillStyle=floor;ctx.fillRect(0,H*.45,W,H*.55);
+
+ // horizon buildings
+ ctx.fillStyle='#777c7a';
+ ctx.fillRect(0,H*.34,W,H*.13);
+ ctx.fillStyle='#a69c88';
+ for(let i=0;i<9;i++){
+  let x=i*W/8;
+  ctx.fillRect(x,H*.23+(i%3)*12,W/9,H*.25);
+  ctx.fillStyle='#554f48';
+  ctx.fillRect(x+8,H*.28+(i%3)*12,14,24);
+  ctx.fillStyle='#a69c88';
+ }
+ // raycast walls
+ const rays=Math.ceil(W/3);
+ depth.length=rays;
+ for(let i=0;i<rays;i++){
+  const angle=yaw+(i/rays-.5)*FOV;
+  const d=cast(angle)*Math.cos(angle-yaw);
+  depth[i]=d;
+  const wallH=Math.min(H*1.5,H*.88/(d+.12));
+  const y=(H-wallH)/2;
+  const shade=Math.max(35,190-d*13);
+  const stripe=(Math.floor(i/5)%2)*8;
+  ctx.fillStyle=`rgb(${shade+stripe},${shade-5+stripe},${shade-18+stripe})`;
+  ctx.fillRect(i*W/rays,y,W/rays+1,wallH);
+  // wall seams
+  if(i%16===0){
+   ctx.fillStyle='#22222225';ctx.fillRect(i*W/rays,y,2,wallH);
+  }
+ }
+ // ground grid hints
+ ctx.strokeStyle='#40382b50';ctx.lineWidth=1;
+ for(let i=1;i<8;i++){
+  let y=H*.48+i*i*H*.008;
+  ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(W,y);ctx.stroke();
+ }
+ // bots sorted far to near
+ const ordered=bots.filter(b=>b.alive).map(b=>{
+  let dx=b.x-player.x,dy=b.y-player.y;
+  let dist=Math.hypot(dx,dy);
+  let a=Math.atan2(dy,dx)-yaw;
+  while(a>Math.PI)a-=2*Math.PI;
+  while(a< -Math.PI)a+=2*Math.PI;
+  return {...b,dist,a,ref:b};
+ }).filter(b=>Math.abs(b.a)<FOV*.7&&b.dist<13)
+ .sort((a,b)=>b.dist-a.dist);
+
+ for(const b of ordered){
+  let sx=(.5+b.a/FOV)*W;
+  let col=Math.floor(sx/W*rays);
+  if(col>=0&&col<rays&&b.dist>depth[col]+.3)continue;
+  const size=Math.min(H*.8,H*.62/(b.dist+.2));
+  const by=H*.52+size*.13;
+  ctx.save();ctx.translate(sx,by);
+  // shadow
+  ctx.fillStyle='#0005';ctx.beginPath();
+  ctx.ellipse(0,2,size*.23,size*.06,0,0,Math.PI*2);ctx.fill();
+  // legs
+  ctx.fillStyle='#202b35';
+  ctx.fillRect(-size*.17,-size*.05,size*.13,size*.27);
+  ctx.fillRect(size*.04,-size*.05,size*.13,size*.27);
+  // body
+  ctx.fillStyle='#454e49';
+  ctx.fillRect(-size*.23,-size*.55,size*.46,size*.48);
+  // vest
+  ctx.fillStyle='#343b38';
+  ctx.fillRect(-size*.18,-size*.51,size*.36,size*.33);
+  // arms
+  ctx.strokeStyle='#b28b69';ctx.lineWidth=size*.09;
+  ctx.beginPath();ctx.moveTo(-size*.18,-size*.48);ctx.lineTo(-size*.29,-size*.23);
+  ctx.moveTo(size*.18,-size*.48);ctx.lineTo(size*.27,-size*.29);ctx.stroke();
+  // head
+  ctx.fillStyle='#b58b68';ctx.beginPath();
+  ctx.arc(0,-size*.66,size*.13,0,Math.PI*2);ctx.fill();
+  // helmet
+  ctx.fillStyle='#202c32';ctx.beginPath();
+  ctx.arc(0,-size*.69,size*.14,Math.PI,Math.PI*2);ctx.fill();
+  // gun
+  ctx.fillStyle='#171c20';ctx.fillRect(size*.18,-size*.34,size*.3,size*.055);
+  // health bar
+  ctx.fillStyle='#111';ctx.fillRect(-size*.24,-size*.91,size*.48,5);
+  ctx.fillStyle='#e43e39';ctx.fillRect(-size*.24,-size*.91,size*.48*(b.hp/100),5);
+  ctx.fillStyle='#ff4444';ctx.beginPath();
+  ctx.moveTo(0,-size*.83);ctx.lineTo(-5,-size*.91);ctx.lineTo(5,-size*.91);
+  ctx.fill();
+  ctx.restore();
+ }
+ // weapon overlay
+ ctx.save();
+ ctx.translate(W*.59,H*1.02);
+ ctx.rotate(-.04);
+ ctx.fillStyle='#242a30';
+ ctx.beginPath();ctx.moveTo(-W*.07,0);ctx.lineTo(-W*.045,-H*.19);
+ ctx.lineTo(W*.02,-H*.23);ctx.lineTo(W*.08,-H*.02);ctx.closePath();ctx.fill();
+ ctx.fillStyle='#41484d';
+ ctx.fillRect(-W*.025,-H*.22,W*.055,H*.22);
+ ctx.fillStyle='#11181d';
+ ctx.fillRect(-W*.012,-H*.29,W*.025,H*.17);
+ ctx.fillStyle='#343a3d';
+ ctx.fillRect(W*.025,-H*.13,W*.06,H*.06);
+ ctx.restore();
+
+ // hit indicator
+ if(hitFlash>0){
+  ctx.fillStyle=`rgba(255,20,20,${hitFlash*.22})`;
+  ctx.fillRect(0,0,W,H);hitFlash-=.035;
+ }
+}
+function movePlayer(dx,dy){
+ const nx=player.x+dx,ny=player.y+dy;
+ if(!solid(nx,player.y))player.x=nx;
+ if(!solid(player.x,ny))player.y=ny;
+}
+function shoot(){
+ if(!running||reloading)return;
+ if(ammo<=0){say('AMMO HABIS — RELOAD!');return}
+ if(fireTimer>0)return;
+ ammo--;fireTimer=.22;
+ // find bot nearest crosshair and in line of sight
+ let target=null,best=.12;
+ for(const b of bots){
+  if(!b.alive)continue;
+  const dx=b.x-player.x,dy=b.y-player.y;
+  const dist=Math.hypot(dx,dy);
+  let a=Math.atan2(dy,dx)-yaw;
+  while(a>Math.PI)a-=2*Math.PI;
+  while(a< -Math.PI)a+=2*Math.PI;
+  const tolerance=Math.max(.035,.15/dist);
+  if(Math.abs(a)<tolerance&&dist<cast(yaw)+.2&&Math.abs(a)<best){
+   target=b;best=Math.abs(a);
+  }
+ }
+ if(target){
+  target.hp-=50;
+  hitFlash=.5;
+  if(target.hp<=0){
+   target.alive=false;kills++;score+=100;
+   say('BOT ELIMINATED +100');
+   if(bots.every(b=>!b.alive)){
+    round++;hp=Math.min(100,hp+25);
+    reserve+=30;ammo=30;
+    say('ROUND CLEAR! ROUND '+round);
+    setTimeout(()=>{if(running)spawnBots(4+round)},800);
+   }
+  }else say('HIT!');
+ }else{
+  // slight miss feedback
+  $('cross').style.color='#ffb66b';
+  setTimeout(()=>$('cross').style.color='white',90);
+ }
+ updateHUD();
+}
+function reload(){
+ if(reloading||ammo===30||reserve<=0)return;
+ reloading=true;say('RELOADING...');
+ setTimeout(()=>{
+  if(!running){reloading=false;return}
+  let amount=Math.min(30-ammo,reserve);
+  ammo+=amount;reserve-=amount;reloading=false;updateHUD();
+ },1000);
+}
+function updateBots(dt){
+ for(const b of bots){
+  if(!b.alive)continue;
+  const dx=player.x-b.x,dy=player.y-b.y;
+  const d=Math.hypot(dx,dy);
+  b.phase+=dt*3;
+  if(d>2.4){
+   let vx=dx/d*b.speed*dt,vy=dy/d*b.speed*dt;
+   const nx=b.x+vx,ny=b.y+vy;
+   if(!solid(nx,b.y))b.x=nx;
+   if(!solid(b.x,ny))b.y=ny;
+  }
+  b.attack-=dt;
+  if(d<7&&b.attack<=0){
+   // bot fire rate; damage is gradual, no instant death
+   let a=Math.atan2(dy,dx);
+   if(Math.abs(Math.atan2(Math.sin(a-yaw),Math.cos(a-yaw)))<.9){
+    hp-=7;hitFlash=.8;
+    if(hp<=0){
+     hp=0;running=false;
+     $('start').style.display='flex';
+     $('start').querySelector('h1').textContent='GAME OVER';
+     $('start').querySelector('.small').innerHTML='Eliminasi: '+kills+'<br>Skor: '+score;
+     $('play').textContent='MAIN LAGI';
+    }
+   }
+   b.attack=1.4+Math.random()*1.1;
+  }
+ }
+ updateHUD();
+}
+function loop(now){
+ if(!running)return;
+ const dt=Math.min((now-last)/1000,.04);last=now;
+ fireTimer=Math.max(0,fireTimer-dt);
+ if(messageTimer>0){messageTimer-=dt;if(messageTimer<=0)$('msg').textContent='ELIMINATE ALL BOTS'}
+ // keyboard movement
+ let forward=(keys.KeyW?1:0)-(keys.KeyS?1:0)-joyY;
+ let strafe=(keys.KeyD?1:0)-(keys.KeyA?1:0)+joyX;
+ const speed=(keys.ShiftLeft?4:2.5)*dt;
+ const dx=(Math.cos(yaw)*forward-Math.sin(yaw)*strafe)*speed;
+ const dy=(Math.sin(yaw)*forward+Math.cos(yaw)*strafe)*speed;
+ movePlayer(dx,dy);
+ if(keys.ArrowLeft)yaw-=dt*1.8;
+ if(keys.ArrowRight)yaw+=dt*1.8;
+ if(keys.Space&&player.z===undefined)player.z=1;
+ if(fireHeld)shoot();
+ updateBots(dt);
+ render();
+ requestAnimationFrame(loop);
+}
+addEventListener('keydown',e=>{
+ keys[e.code]=true;
+ if(e.code==='KeyR')reload();
+ if(e.code==='Escape'){running=false;$('start').style.display='flex'}
+});
+addEventListener('keyup',e=>keys[e.code]=false);
+
+// Mobile joystick
+const stick=$('stick'),knob=$('knob');
+let joyId=null,stickRect;
+stick.addEventListener('pointerdown',e=>{
+ joyId=e.pointerId;stick.setPointerCapture(joyId);
+ stickRect=stick.getBoundingClientRect();joyMove(e);
+});
+stick.addEventListener('pointermove',e=>{if(e.pointerId===joyId)joyMove(e)});
+function joyMove(e){
+ const r=stick.getBoundingClientRect();
+ let dx=e.clientX-(r.left+r.width/2),dy=e.clientY-(r.top+r.height/2);
+ const max=35,len=Math.hypot(dx,dy)||1;
+ if(len>max){dx=dx/len*max;dy=dy/len*max}
+ knob.style.transform=`translate(${dx}px,${dy}px)`;
+ joyX=dx/max;joyY=dy/max;
+}
+function endJoy(){joyId=null;joyX=joyY=0;knob.style.transform='translate(0,0)'}
+stick.addEventListener('pointerup',endJoy);
+stick.addEventListener('pointercancel',endJoy);
+
+// Right side drag to aim
+let lookId=null,lastX=0;
+canvas.addEventListener('pointerdown',e=>{
+ if(e.clientX<W*.4)return;
+ lookId=e.pointerId;lastX=e.clientX;
+ canvas.setPointerCapture(lookId);
+});
+canvas.addEventListener('pointermove',e=>{
+ if(e.pointerId!==lookId)return;
+ yaw+=(e.clientX-lastX)*.006;
+ lastX=e.clientX;
+});
+canvas.addEventListener('pointerup',()=>lookId=null);
+canvas.addEventListener('pointercancel',()=>lookId=null);
+
+$('fire').addEventListener('pointerdown',e=>{e.preventDefault();fireHeld=true;shoot()});
+['pointerup','pointercancel','pointerleave'].forEach(ev=>$('fire').addEventListener(ev,()=>fireHeld=false));
+$('reload').addEventListener('pointerdown',e=>{e.preventDefault();reload()});
+$('jump').addEventListener('pointerdown',e=>{
+ // Small visual hop; gameplay remains lightweight
+ canvas.style.transform='translateY(-8px)';
+ setTimeout(()=>canvas.style.transform='',130);
+});
+})();
+</script>
+</body>
+</html>
